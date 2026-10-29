@@ -993,7 +993,7 @@ with st.sidebar:
     # Document Upload
     uploaded_file = st.file_uploader(
         "Upload Study Guide / Notes",
-        type=["txt", "md", "pdf"],
+        type=["txt", "md", "pdf", "docx"],
         help="Upload company interview sheets or subject notes to index into ChromaDB.",
     )
     if uploaded_file is not None:

@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from agent.llm import get_llm
 from agent.prompts import EXPLANATION_PROMPT
 from backend.config import get_settings
-from rag.ingestion import load_and_chunk_directory
+from rag.ingestion import SUPPORTED_DOCUMENT_EXTENSIONS, load_and_chunk_directory
 from rag.retriever import retrieve_context_string, retrieve_relevant_documents
 from rag.vectorstore import get_collection_stats, index_documents, reset_collection
 
@@ -93,10 +93,9 @@ async def ingest_documents() -> IngestResponse:
     logger.info(f"Triggered document ingestion from: {docs_dir}")
 
     # Discover files
-    supported_exts = {".txt", ".md", ".pdf", ".docx"}
     files = [
         f.name for f in docs_dir.rglob("*")
-        if f.is_file() and f.suffix.lower() in supported_exts
+        if f.is_file() and f.suffix.lower() in SUPPORTED_DOCUMENT_EXTENSIONS
     ]
 
     try:
@@ -129,10 +128,9 @@ async def get_status() -> Dict[str, Any]:
     settings = get_settings()
     stats = get_collection_stats()
 
-    supported_exts = {".txt", ".md", ".pdf", ".docx"}
     files = [
         f.name for f in settings.documents_dir.rglob("*")
-        if f.is_file() and f.suffix.lower() in supported_exts
+        if f.is_file() and f.suffix.lower() in SUPPORTED_DOCUMENT_EXTENSIONS
     ] if settings.documents_dir.exists() else []
 
     return {

@@ -25,6 +25,9 @@ class AgentState(TypedDict, total=False):
     student_name : str
         Name of the student (populated after login/profile step).
 
+    user_id : int
+        Authenticated user ID if available.
+
     student_profile : dict
         Structured profile: name, experience level, target role, etc.
 
@@ -51,6 +54,12 @@ class AgentState(TypedDict, total=False):
     weak_topics : list[str]
         Topics where the student has scored below threshold.
 
+    mastered_topics : list[str]
+        Topics where the student has scored >= passing threshold.
+
+    completed_topics : list[str]
+        Topics where the student has completed at least one practice question.
+
     progress : dict
         Aggregate progress data:
         {"completed_topics": [...], "scores": {...}, "session_count": int}
@@ -71,18 +80,19 @@ class AgentState(TypedDict, total=False):
     topic_scores : dict[str, list[float]]
         Score history mapped per topic for longitudinal weakness tracking.
 
-    mastered_topics : list[str]
-        Topics where the student has scored >= passing threshold.
-
     question_details : dict
         Structured question payload (question, topic, expected_points, difficulty).
 
     remediation_notes : str
         Specific tips or document excerpts recommended to fix an identified weakness.
+
+    session_id : str
+        Persistent session identifier.
     """
 
     student_goal: Optional[str]
     student_name: Optional[str]
+    user_id: Optional[int]
     student_profile: Optional[dict[str, Any]]
     current_topic: Optional[str]
     messages: Optional[list[dict[str, str]]]
@@ -92,6 +102,7 @@ class AgentState(TypedDict, total=False):
     evaluation: Optional[dict[str, Any]]
     weak_topics: Optional[list[str]]
     mastered_topics: Optional[list[str]]
+    completed_topics: Optional[list[str]]
     topic_scores: Optional[dict[str, list[float]]]
     question_details: Optional[dict[str, Any]]
     remediation_notes: Optional[str]

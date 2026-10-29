@@ -64,6 +64,10 @@ class AgentRequest(BaseModel):
         examples=[7],
         description="Optional number of days available for preparation.",
     )
+    user_id: Optional[int] = Field(
+        default=None,
+        description="Optional user ID for candidate profile linkage.",
+    )
     api_key: Optional[str] = Field(
         default=None,
         description="Optional Gemini API key passed from candidate session.",
@@ -116,6 +120,10 @@ class EvaluateRequest(BaseModel):
     topic_scores: Optional[Dict[str, List[float]]] = None
     progress: Optional[Dict[str, Any]] = None
     session_id: Optional[str] = None
+    user_id: Optional[int] = Field(
+        default=None,
+        description="Optional user ID for candidate profile linkage.",
+    )
     api_key: Optional[str] = Field(
         default=None,
         description="Optional Gemini API key passed from candidate session.",
@@ -192,7 +200,7 @@ async def run_agent(
 
     # ── Retrieve past persistent memory for this student ───────────────────
     try:
-        past_mem = get_student_memory(db, student_name)
+        past_mem = get_student_memory(db, student_name, user_id=request.user_id)
     except Exception as mem_err:
         logger.warning(f"Could not load student memory: {mem_err}")
         past_mem = {}
@@ -251,6 +259,7 @@ async def run_agent(
                 name=student_name,
                 target_technology=request.target_technology or "General",
                 available_days=request.available_days or 7,
+                user_id=request.user_id,
             )
             goal = get_or_create_goal(
                 db=db,
@@ -406,7 +415,7 @@ async def evaluate_answer(
                     or "Student"
                 )
 
-            student = get_or_create_student(db=db, name=student_name)
+            student = get_or_create_student(db=db, name=student_name, user_id=request.user_id)
             goal = get_or_create_goal(
                 db=db,
                 student_id=student.id,
@@ -438,11 +447,18 @@ async def evaluate_answer(
                 )
 
             # Persist updated progress
+            completed_topics = (
+                final_state.get("completed_topics")
+                or (final_state.get("progress") or {}).get("completed_topics")
+                or list((final_state.get("topic_scores") or {}).keys())
+                or final_state.get("mastered_topics")
+                or []
+            )
             update_progress(
                 db=db,
                 student_id=student.id,
                 goal_id=goal.id,
-                completed_topics=final_state.get("mastered_topics") or [],
+                completed_topics=completed_topics,
                 weak_topics=final_state.get("weak_topics") or [],
                 mastered_topics=final_state.get("mastered_topics") or [],
                 topic_scores=final_state.get("topic_scores") or {},

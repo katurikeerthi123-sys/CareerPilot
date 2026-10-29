@@ -38,28 +38,48 @@ def get_or_create_student(
     target_technology: str = "General",
     available_days: int = 7,
     email: Optional[str] = None,
+    user_id: Optional[int] = None,
 ) -> Student:
-    """Find student by name or create a new student record."""
+    """Find student by user_id, email, or name, or create a new student record."""
     clean_name = name.strip() or "Student"
-    student = db.query(Student).filter(func.lower(Student.name) == clean_name.lower()).first()
+    student = None
+
+    # Priority 1: Match on user_id if provided
+    if user_id is not None:
+        student = db.query(Student).filter(Student.user_id == user_id).first()
+
+    # Priority 2: Match on email if provided
+    if not student and email:
+        clean_email = email.strip().lower()
+        student = db.query(Student).filter(func.lower(Student.email) == clean_email).first()
+
+    # Priority 3: Match on name (fallback for unauthenticated or guest profiles)
+    if not student:
+        query = db.query(Student).filter(func.lower(Student.name) == clean_name.lower())
+        if user_id is not None:
+            query = query.filter((Student.user_id.is_(None)) | (Student.user_id == user_id))
+        student = query.first()
 
     if not student:
         student = Student(
+            user_id=user_id,
             name=clean_name,
-            email=email,
+            email=email.strip().lower() if email else None,
             target_technology=target_technology,
             available_days=available_days,
         )
         db.add(student)
         db.commit()
         db.refresh(student)
-        logger.info(f"Created new persistent student profile: id={student.id}, name='{student.name}'")
+        logger.info(f"Created new persistent student profile: id={student.id}, user_id={student.user_id}, name='{student.name}'")
     else:
-        # Update current settings
+        # Update current settings and link user_id if not yet bound
         student.target_technology = target_technology
         student.available_days = available_days
+        if user_id is not None and student.user_id is None:
+            student.user_id = user_id
         if email and not student.email:
-            student.email = email
+            student.email = email.strip().lower()
         db.commit()
         db.refresh(student)
         logger.debug(f"Retrieved existing student profile: id={student.id}, name='{student.name}'")
@@ -346,10 +366,13 @@ def update_progress(
     prog.total_questions_attempted = total_answers
     prog.average_score = float(avg_score)
 
-    # Calculate overall progress percent based on mastered topics count
+    # Calculate overall progress percent based on mastered topics count vs curriculum topics
     total_topics = db.query(Topic).filter(Topic.goal_id == goal_id).count()
     if total_topics > 0:
         prog.overall_progress_percent = min(100, int((len(mastered_topics) / total_topics) * 100))
+    elif completed_topics:
+        total_attempted = max(len(completed_topics), len(mastered_topics))
+        prog.overall_progress_percent = min(100, int((len(mastered_topics) / total_attempted) * 100))
     else:
         prog.overall_progress_percent = min(100, len(mastered_topics) * 20)
 
@@ -363,14 +386,21 @@ def update_progress(
 def get_student_memory(
     db: Session,
     student_name: str,
+    user_id: Optional[int] = None,
 ) -> dict[str, Any]:
     """
     Retrieve past performance memory for a student.
     Enables the Agent to recall weak topics, mastered topics, and historical scores
-    across sessions.
+    across sessions. Matches on user_id if present, falling back to name.
     """
-    clean_name = student_name.strip()
-    student = db.query(Student).filter(func.lower(Student.name) == clean_name.lower()).first()
+    student = None
+    if user_id is not None:
+        student = db.query(Student).filter(Student.user_id == user_id).first()
+
+    if not student:
+        clean_name = student_name.strip()
+        student = db.query(Student).filter(func.lower(Student.name) == clean_name.lower()).first()
+
     if not student:
         return {
             "has_memory": False,
@@ -451,12 +481,13 @@ def create_user(
     db.commit()
     db.refresh(user)
 
-    # Automatically ensure a corresponding Student record exists
+    # Automatically ensure a corresponding Student record exists bound to user_id
     get_or_create_student(
         db=db,
         name=clean_full_name,
         target_technology=target_technology,
         email=clean_email,
+        user_id=user.id,
     )
 
     logger.info(f"Registered new user account: id={user.id}, username='{user.username}'")
@@ -503,4 +534,3 @@ def update_user_last_login(db: Session, user_id: int) -> Optional[User]:
 def list_users(db: Session) -> list[User]:
     """Return all registered users."""
     return db.query(User).order_by(User.created_at.desc()).all()
-

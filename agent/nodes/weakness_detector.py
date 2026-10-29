@@ -5,7 +5,8 @@ Updates student knowledge state and progress:
   - Tracks score history per topic (state["topic_scores"])
   - If score < 7.0: marks topic as weak, removes from mastered, stores remediation advice
   - If score >= 7.0: marks topic as mastered, clears from weak list
-  - Recalculates aggregate readiness progress percentages
+  - Sets completed_topics as all topics attempted (scores recorded)
+  - Recalculates aggregate readiness progress percentages based on curriculum topics
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ def detect_weakness_and_update_progress(state: AgentState) -> AgentState:
     and update longitudinal progress.
 
     Reads:  state["evaluation"], state["current_topic"], state["weak_topics"], state["mastered_topics"]
-    Writes: state["weak_topics"], state["mastered_topics"], state["topic_scores"], state["progress"], state["remediation_notes"]
+    Writes: state["weak_topics"], state["mastered_topics"], state["completed_topics"], state["topic_scores"], state["progress"], state["remediation_notes"]
     """
     if state.get("error"):
         return state
@@ -31,7 +32,7 @@ def detect_weakness_and_update_progress(state: AgentState) -> AgentState:
     score = float(eval_data.get("score", 0.0))
     topic = state.get("current_topic") or "General Technical"
     profile = state.get("student_profile") or {}
-    all_curriculum_topics: List[str] = profile.get("topics", [])
+    all_curriculum_topics: List[str] = list(profile.get("topics", []))
     if topic not in all_curriculum_topics and all_curriculum_topics:
         all_curriculum_topics.append(topic)
 
@@ -68,8 +69,11 @@ def detect_weakness_and_update_progress(state: AgentState) -> AgentState:
 
         remediation_notes = f"✅ Demonstrated mastery in '{topic}'."
 
-    # 3. Aggregate progress calculation
-    total_topics_count = max(len(all_curriculum_topics), 1)
+    # 3. Explicit completed topics (all topics with at least one question attempt)
+    completed_topics: List[str] = [t for t, scores in topic_scores.items() if scores]
+
+    # 4. Aggregate progress calculation
+    total_topics_count = max(len(all_curriculum_topics), len(completed_topics), 1)
     progress_pct = int((len(mastered_topics) / total_topics_count) * 100)
 
     # Calculate average score across all attempts
@@ -78,8 +82,9 @@ def detect_weakness_and_update_progress(state: AgentState) -> AgentState:
 
     current_progress = dict(state.get("progress") or {})
     current_progress.update({
-        "completed_topics": mastered_topics,
+        "completed_topics": completed_topics,
         "weak_topics": weak_topics,
+        "mastered_topics": mastered_topics,
         "mastered_count": len(mastered_topics),
         "total_topics": total_topics_count,
         "overall_progress_percent": min(progress_pct, 100),
@@ -90,6 +95,7 @@ def detect_weakness_and_update_progress(state: AgentState) -> AgentState:
 
     return {
         **state,
+        "completed_topics": completed_topics,
         "weak_topics": weak_topics,
         "mastered_topics": mastered_topics,
         "topic_scores": topic_scores,

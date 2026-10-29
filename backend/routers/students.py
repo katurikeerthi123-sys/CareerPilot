@@ -39,6 +39,7 @@ class StudentSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    user_id: Optional[int] = None
     name: str
     email: Optional[str] = None
     target_technology: Optional[str] = None
@@ -75,11 +76,22 @@ class StudentProfileDetail(BaseModel):
 # ── Helper ────────────────────────────────────────────────────────────────────
 
 def _find_student(identifier: str, db: Session) -> Student:
-    """Find student by numeric ID or case-insensitive name."""
-    if identifier.isdigit():
-        student = db.query(Student).filter(Student.id == int(identifier)).first()
+    """Find student by numeric ID (Student.id or Student.user_id), email, or case-insensitive name."""
+    clean_id = identifier.strip()
+    student = None
+
+    if clean_id.isdigit():
+        num_id = int(clean_id)
+        # Check by student.id first, then student.user_id
+        student = db.query(Student).filter(Student.id == num_id).first()
+        if not student:
+            student = db.query(Student).filter(Student.user_id == num_id).first()
     else:
-        student = db.query(Student).filter(func.lower(Student.name) == identifier.strip().lower()).first()
+        # Check by email if it contains '@'
+        if "@" in clean_id:
+            student = db.query(Student).filter(func.lower(Student.email) == clean_id.lower()).first()
+        if not student:
+            student = db.query(Student).filter(func.lower(Student.name) == clean_id.lower()).first()
 
     if not student:
         raise HTTPException(

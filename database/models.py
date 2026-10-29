@@ -2,7 +2,8 @@
 CareerPilot — SQLAlchemy ORM Data Models (Phase 6 — Persistent Memory)
 
 Defines models for:
-  - Student: Student profile and placement goals
+  - User: Registered user accounts and authentication credentials
+  - Student: Student profile and placement goals (linked to User)
   - Goal: Target technology, available days, and prep objectives
   - Topic: Curriculum topics with mastery and weakness flags
   - Question: Generated practice questions with hints and RAG context
@@ -47,6 +48,9 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
 
+    # Relationships
+    student = relationship("Student", back_populates="user", uselist=False)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -65,6 +69,7 @@ class Student(Base):
     __tablename__ = "students"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     name = Column(String(120), nullable=False, index=True)
     email = Column(String(120), nullable=True, unique=True, index=True)
     target_technology = Column(String(80), nullable=True, default="General")
@@ -74,6 +79,7 @@ class Student(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Relationships
+    user = relationship("User", back_populates="student")
     goals = relationship("Goal", back_populates="student", cascade="all, delete-orphan")
     progress_records = relationship("Progress", back_populates="student", cascade="all, delete-orphan")
     study_sessions = relationship("StudySession", back_populates="student", cascade="all, delete-orphan")
@@ -82,6 +88,7 @@ class Student(Base):
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
+            "user_id": self.user_id,
             "name": self.name,
             "email": self.email,
             "target_technology": self.target_technology,
@@ -138,7 +145,7 @@ class Topic(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
-    goal = relationship("Goal", back_populates="topics")
+    goal = relationship("Topic", back_populates="topics") if False else relationship("Goal", back_populates="topics")
     questions = relationship("Question", back_populates="topic", cascade="all, delete-orphan")
 
     def to_dict(self) -> dict[str, Any]:

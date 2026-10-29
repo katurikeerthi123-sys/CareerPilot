@@ -45,11 +45,18 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     logger.info(f"Environment : {settings.app_env}")
     logger.info(f"LLM model   : {settings.llm_model}")
     logger.info(f"Docs        : http://{settings.app_host}:{settings.app_port}/docs")
+
+    # 1. Startup environment validation
+    settings.validate_startup()
+
+    # 2. Database initialization - fatal error stops startup
     try:
         init_db()
         logger.info("SQLite persistent database ready.")
     except Exception as exc:
-        logger.error(f"Failed to initialize SQLite database: {exc}")
+        logger.critical(f"FATAL: Failed to initialize SQLite database: {exc}")
+        raise RuntimeError(f"Database initialization failed: {exc}") from exc
+
     yield
     # ── Shutdown ─────────────────────────────────────────────────────────────
     logger.info("CareerPilot API shutting down.")
@@ -62,16 +69,20 @@ app = FastAPI(
         "An Agentic AI for Personalized Placement Preparation. "
         "Powered by LangGraph + Gemini."
     ),
-    version="0.2.0",
+    version="0.3.0",
     docs_url="/docs",
     redoc_url="/redoc",
     lifespan=lifespan,
 )
 
-# ── CORS ─────────────────────────────────────────────────────────────────────
+# ── CORS Hardening ────────────────────────────────────────────────────────────
+cors_origins = list(settings.cors_allowed_origins)
+if settings.is_development and not cors_origins:
+    cors_origins = ["*"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # tighten in production
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -98,12 +109,38 @@ app.include_router(interview_router, prefix="/api/interview", tags=["Mock Interv
 # ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/health", tags=["System"])
 async def health_check() -> dict:
-    """Basic liveness probe — confirms the API is running."""
+    """Comprehensive readiness and liveness probe checking DB, ChromaDB, and LLM configuration."""
+    from sqlalchemy import text
+    from database.connection import get_db_context
+
+    db_status = "healthy"
+    try:
+        with get_db_context() as session:
+            session.execute(text("SELECT 1"))
+    except Exception as exc:
+        db_status = f"unhealthy: {exc}"
+
+    chroma_status = "ready"
+    try:
+        from rag.vectorstore import get_collection_stats
+        c_stats = get_collection_stats()
+        chroma_status = c_stats.get("status", "ready")
+    except Exception as exc:
+        chroma_status = f"degraded: {exc}"
+
+    api_key_configured = bool(settings.gemini_api_key)
+    is_ready = db_status == "healthy" and (api_key_configured or settings.is_development)
+
     return {
-        "status": "ok",
+        "status": "ok" if is_ready else "degraded",
         "app": "CareerPilot",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "environment": settings.app_env,
+        "services": {
+            "database": db_status,
+            "chromadb": chroma_status,
+            "gemini_api_key": "configured" if api_key_configured else "missing",
+        },
     }
 
 

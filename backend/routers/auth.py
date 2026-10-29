@@ -4,6 +4,7 @@ CareerPilot — User Authentication API Router
 Exposes REST endpoints for:
   - POST /api/auth/register — Register new user account with hashed password
   - POST /api/auth/login    — Authenticate credentials and return session token
+  - GET  /api/auth/verify   — Verify cryptographic session token & return profile
   - GET  /api/auth/users    — List registered users (profile summaries)
 """
 
@@ -12,13 +13,19 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from backend.auth import create_session_token, hash_password, verify_password
+from backend.auth import (
+    create_session_token,
+    hash_password,
+    verify_password,
+    verify_session_token,
+)
 from database.connection import get_db
+from database.models import User
 from database.repository import (
     create_user,
     get_user_by_email,
@@ -53,6 +60,55 @@ class AuthResponse(BaseModel):
     message: str
     token: Optional[str] = None
     user: Optional[dict[str, Any]] = None
+
+
+class VerifyResponse(BaseModel):
+    valid: bool
+    message: str
+    user: Optional[dict[str, Any]] = None
+    expires_at: Optional[int] = None
+
+
+# ── Dependency: Get Current Authenticated User ───────────────────────────────
+
+def get_current_user(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+) -> User:
+    """Dependency for protected endpoints verifying Bearer token in header."""
+    if not authorization:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authorization header required.",
+        )
+    parts = authorization.strip().split()
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authorization format. Expected 'Bearer <token>'.",
+        )
+    raw_token = parts[1]
+    is_valid, payload, error_msg = verify_session_token(raw_token)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=error_msg or "Invalid session token.",
+        )
+    user_id = payload.get("sub") if payload else None
+    user = db.query(User).filter(User.id == user_id).first() if user_id else None
+    if not user and payload and "username" in payload:
+        user = get_user_by_username(db, payload["username"])
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User associated with token not found.",
+        )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is deactivated.",
+        )
+    return user
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -106,7 +162,7 @@ def register_user(request: RegisterRequest, db: Session = Depends(get_db)):
         target_technology=request.target_technology or "Java",
     )
 
-    token = create_session_token()
+    token = create_session_token(user_id=user.id, username=user.username)
     logger.info(f"User registration successful for '{user.username}'")
 
     return AuthResponse(
@@ -148,7 +204,7 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
         )
 
     update_user_last_login(db, user.id)
-    token = create_session_token()
+    token = create_session_token(user_id=user.id, username=user.username)
     logger.info(f"User login successful for '{user.username}'")
 
     return AuthResponse(
@@ -156,6 +212,66 @@ def login_user(request: LoginRequest, db: Session = Depends(get_db)):
         message=f"Welcome back, {user.full_name or user.username}!",
         token=token,
         user=user.to_dict(),
+    )
+
+
+@router.get(
+    "/verify",
+    response_model=VerifyResponse,
+    summary="Verify cryptographic session token and return user profile",
+)
+def verify_token(
+    authorization: Optional[str] = Header(None),
+    token: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Validates token from Authorization: Bearer <token> or query parameter ?token=<token>.
+    Returns user details if active and valid.
+    """
+    raw_token = token
+    if not raw_token and authorization:
+        parts = authorization.strip().split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            raw_token = parts[1]
+        elif len(parts) == 1:
+            raw_token = parts[0]
+
+    if not raw_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session token missing.",
+        )
+
+    is_valid, payload, error_msg = verify_session_token(raw_token)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=error_msg or "Invalid session token.",
+        )
+
+    user_id = payload.get("sub") if payload else None
+    user = db.query(User).filter(User.id == user_id).first() if user_id else None
+    if not user and payload and "username" in payload:
+        user = get_user_by_username(db, payload["username"])
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User associated with token no longer exists.",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is deactivated.",
+        )
+
+    return VerifyResponse(
+        valid=True,
+        message="Token is valid and active.",
+        user=user.to_dict(),
+        expires_at=payload.get("exp") if payload else None,
     )
 
 

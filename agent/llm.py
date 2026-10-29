@@ -8,6 +8,7 @@ All agent nodes import from here — dynamically resolves Gemini API key.
 from __future__ import annotations
 
 import os
+import sys
 from functools import lru_cache
 
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -26,15 +27,15 @@ def get_effective_gemini_api_key() -> str:
     if settings.gemini_api_key and settings.gemini_api_key.strip():
         return settings.gemini_api_key.strip()
 
-    try:
-        import streamlit as st
-        if hasattr(st, "secrets"):
+    st = sys.modules.get("streamlit")
+    if st and hasattr(st, "secrets"):
+        try:
             if "GEMINI_API_KEY" in st.secrets and str(st.secrets["GEMINI_API_KEY"]).strip():
                 return str(st.secrets["GEMINI_API_KEY"]).strip()
             if "GOOGLE_API_KEY" in st.secrets and str(st.secrets["GOOGLE_API_KEY"]).strip():
                 return str(st.secrets["GOOGLE_API_KEY"]).strip()
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     return ""
 
@@ -63,6 +64,17 @@ def get_llm() -> ChatGoogleGenerativeAI:
     """
     settings = get_settings()
     api_key = get_effective_gemini_api_key()
+
+    if not api_key:
+        if settings.is_production:
+            raise ValueError(
+                "CRITICAL: GEMINI_API_KEY is not configured in production. "
+                "Set GEMINI_API_KEY in your environment or secrets."
+            )
+        logger.warning(
+            "GEMINI_API_KEY is not set; LLM invocation will fail unless running under mock testing."
+        )
+
     return _create_llm_instance(
         settings.llm_model,
         api_key,

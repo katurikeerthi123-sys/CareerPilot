@@ -3,7 +3,7 @@ CareerPilot — Document Ingestion & Chunking (Phase 4)
 
 Responsible for:
   1. Discovering documents in data/documents/ (or custom directory).
-  2. Loading common document types (.txt, .md, .pdf, .docx).
+  2. Loading common document types (.txt, .md, .markdown, .pdf, .docx).
   3. Splitting documents into semantic chunks with overlap.
   4. Attaching metadata (source, chunk_id, total_chunks, timestamp).
 """
@@ -15,16 +15,19 @@ from pathlib import Path
 from typing import List, Optional
 
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from loguru import logger
 
 from backend.config import get_settings
+
+# Canonical set of verified supported document extensions
+SUPPORTED_DOCUMENT_EXTENSIONS: set[str] = {".txt", ".md", ".markdown", ".pdf", ".docx"}
 
 
 def load_single_file(file_path: Path) -> List[Document]:
     """
     Load a single document file into LangChain Document objects.
-    Supports .txt, .md, .pdf, and .docx.
+    Supports .txt, .md, .markdown, .pdf, and .docx.
+    Explicitly rejects legacy binary .doc formats with an informative warning.
     """
     suffix = file_path.suffix.lower()
     docs: List[Document] = []
@@ -40,14 +43,29 @@ def load_single_file(file_path: Path) -> List[Document]:
             ]
 
         elif suffix == ".pdf":
-            from langchain_community.document_loaders import PyPDFLoader
+            try:
+                from langchain_community.document_loaders import PyPDFLoader
+            except ImportError:
+                logger.error(f"Cannot parse PDF '{file_path.name}': pypdf is not installed.")
+                return []
             loader = PyPDFLoader(str(file_path))
             docs = loader.load()
 
-        elif suffix in [".docx", ".doc"]:
-            from langchain_community.document_loaders import Docx2txtLoader
+        elif suffix == ".docx":
+            try:
+                from langchain_community.document_loaders import Docx2txtLoader
+            except ImportError:
+                logger.error(f"Cannot parse DOCX '{file_path.name}': docx2txt is not installed.")
+                return []
             loader = Docx2txtLoader(str(file_path))
             docs = loader.load()
+
+        elif suffix == ".doc":
+            logger.warning(
+                f"Legacy binary .doc format is not supported for '{file_path.name}'. "
+                "Please re-save or convert the document to .docx or .pdf."
+            )
+            return []
 
         else:
             logger.warning(f"Unsupported file format skipped: {file_path.name}")
@@ -70,6 +88,8 @@ def chunk_documents(
     Split loaded documents into overlapping chunks using RecursiveCharacterTextSplitter.
     Enriches each chunk with chunk_id and ingestion timestamp metadata.
     """
+    from langchain_text_splitters.character import RecursiveCharacterTextSplitter
+
     settings = get_settings()
     c_size = chunk_size or settings.chunk_size
     c_overlap = chunk_overlap or settings.chunk_overlap
@@ -115,10 +135,9 @@ def load_and_chunk_directory(
         target_dir.mkdir(parents=True, exist_ok=True)
         return []
 
-    supported_extensions = {".txt", ".md", ".pdf", ".docx"}
     all_files = [
         f for f in target_dir.rglob("*")
-        if f.is_file() and f.suffix.lower() in supported_extensions
+        if f.is_file() and f.suffix.lower() in SUPPORTED_DOCUMENT_EXTENSIONS
     ]
 
     logger.info(f"Discovered {len(all_files)} documents in '{target_dir}'")

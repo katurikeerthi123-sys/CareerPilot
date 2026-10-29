@@ -6,8 +6,10 @@ Loads all settings from environment variables (via .env).
 from __future__ import annotations
 
 import os
+import sys
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -16,18 +18,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 ROOT_DIR: Path = Path(__file__).resolve().parent.parent
 
 # ── Sync Streamlit Secrets (for Streamlit Cloud deployments) ──────────────────
-try:
-    import streamlit as _st
-    if hasattr(_st, "secrets"):
-        for _k, _v in _st.secrets.items():
-            if isinstance(_v, dict):
-                for _sk, _sv in _v.items():
-                    if _sk not in os.environ:
-                        os.environ[_sk] = str(_sv)
-            elif _k not in os.environ:
-                os.environ[_k] = str(_v)
-except Exception:
-    pass
+if "streamlit" in sys.modules or os.environ.get("STREAMLIT_SERVER_PORT"):
+    try:
+        import streamlit as _st
+        if hasattr(_st, "secrets"):
+            for _k, _v in _st.secrets.items():
+                if isinstance(_v, dict):
+                    for _sk, _sv in _v.items():
+                        if _sk not in os.environ:
+                            os.environ[_sk] = str(_sv)
+                elif _k not in os.environ:
+                    os.environ[_k] = str(_v)
+    except Exception:
+        pass
 
 
 class Settings(BaseSettings):
@@ -66,8 +69,21 @@ class Settings(BaseSettings):
     chunk_overlap: int = 200
     retrieval_top_k: int = 5
 
-    # ── Streamlit ────────────────────────────────────────────────────────────
+    # ── Streamlit & CORS ─────────────────────────────────────────────────────
     streamlit_port: int = 8501
+    cors_allowed_origins: list[str] = [
+        "http://localhost:8501",
+        "http://127.0.0.1:8501",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:3000",
+        "http://testserver",
+        "testserver",
+    ]
+
+    # ── Security & Sessions ──────────────────────────────────────────────────
+    auth_secret_key: str = "careerpilot-session-signing-secret-key-2026"
+    token_expiry_hours: int = 168
 
     # ── Derived helpers ──────────────────────────────────────────────────────
     @property
@@ -86,16 +102,20 @@ class Settings(BaseSettings):
             )
             if env_val:
                 return env_val
-            try:
-                import streamlit as _st
-                if hasattr(_st, "secrets"):
-                    if "GEMINI_API_KEY" in _st.secrets and str(_st.secrets["GEMINI_API_KEY"]).strip():
-                        return str(_st.secrets["GEMINI_API_KEY"]).strip()
-                    if "GOOGLE_API_KEY" in _st.secrets and str(_st.secrets["GOOGLE_API_KEY"]).strip():
-                        return str(_st.secrets["GOOGLE_API_KEY"]).strip()
-            except Exception:
-                pass
+            st = sys.modules.get("streamlit")
+            if st and hasattr(st, "secrets"):
+                try:
+                    if "GEMINI_API_KEY" in st.secrets and str(st.secrets["GEMINI_API_KEY"]).strip():
+                        return str(st.secrets["GEMINI_API_KEY"]).strip()
+                    if "GOOGLE_API_KEY" in st.secrets and str(st.secrets["GOOGLE_API_KEY"]).strip():
+                        return str(st.secrets["GOOGLE_API_KEY"]).strip()
+                except Exception:
+                    pass
         return super().__getattribute__(name)
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.lower() in ("production", "prod")
 
     def validate_required(self) -> None:
         """Raise ValueError if mandatory secrets are missing."""
@@ -104,6 +124,20 @@ class Settings(BaseSettings):
                 "GEMINI_API_KEY is not set. "
                 "Copy .env.example → .env and add your key."
             )
+
+    def validate_startup(self) -> None:
+        """Strict startup validation for production environments."""
+        if self.is_production:
+            if not self.gemini_api_key:
+                raise ValueError(
+                    "CRITICAL: GEMINI_API_KEY is not set in production. "
+                    "Application cannot boot safely without LLM credentials."
+                )
+            if "*" in self.cors_allowed_origins:
+                raise ValueError(
+                    "CRITICAL: Wildcard '*' CORS origin is forbidden in production mode. "
+                    "Configure explicit origins in CORS_ALLOWED_ORIGINS."
+                )
 
 
 @lru_cache(maxsize=1)

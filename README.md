@@ -110,7 +110,7 @@
 
 ## 🛠️ Tech Stack
 
-- **Language:** Python 3.13
+- **Language:** Python 3.11, 3.12, 3.13 (Fully tested in CI across 3.11–3.13)
 - **Agent Framework:** LangGraph 0.2+ & LangChain
 - **LLM Engine:** Google Gemini (Gemini 3.5 Flash Lite) via `langchain-google-genai`
 - **Backend API:** FastAPI & Uvicorn
@@ -152,12 +152,21 @@ cp .env.example .env
 ```
 Open `.env` and set your Google Gemini API Key:
 ```ini
+# Core AI Credentials
 GEMINI_API_KEY="your-gemini-api-key"
 LLM_MODEL="gemini-3.5-flash-lite"
-APP_ENV="development"
+
+# Server & Security
+APP_ENV="development"                  # Set to "production" for strict startup checks
 APP_HOST="0.0.0.0"
 APP_PORT=8000
+CORS_ALLOWED_ORIGINS='["http://localhost:8501","http://127.0.0.1:8501"]'
+AUTH_SECRET_KEY="your-cryptographic-secret-key"
+TOKEN_EXPIRY_HOURS=168
 ```
+
+> **Production Security Note:** When `APP_ENV=production`, the application performs strict startup validation: `GEMINI_API_KEY` must be set, and wildcard `*` CORS origins are rejected.
+
 
 ---
 
