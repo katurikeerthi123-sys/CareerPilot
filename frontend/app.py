@@ -194,10 +194,17 @@ def call_agent_api(
         "available_days": days,
         "api_key": effective_key,
     }
+    auth_user = st.session_state.get("authenticated_user")
+    if isinstance(auth_user, dict) and auth_user.get("id"):
+        payload["user_id"] = auth_user["id"]
+
+    auth_token = st.session_state.get("auth_token")
+    headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
     try:
         resp = requests.post(
             f"{BACKEND_URL}/api/agent",
             json=payload,
+            headers=headers,
             timeout=120,
         )
         if resp.status_code == 200:
@@ -248,10 +255,17 @@ def call_evaluate_api(
         "session_id": agent_data.get("session_id"),
         "api_key": effective_key,
     }
+    auth_user = st.session_state.get("authenticated_user")
+    if isinstance(auth_user, dict) and auth_user.get("id"):
+        payload["user_id"] = auth_user["id"]
+
+    auth_token = st.session_state.get("auth_token")
+    headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
     try:
         resp = requests.post(
             f"{BACKEND_URL}/api/agent/evaluate",
             json=payload,
+            headers=headers,
             timeout=120,
         )
         if resp.status_code == 200:
@@ -831,11 +845,15 @@ if not st.session_state.get("authenticated_user"):
 # ── Auto-Restore Candidate's Saved Preparation Track ──────────────────────────
 if not st.session_state.get("agent_data"):
     _curr_u = st.session_state.get("authenticated_user") or {}
+    _user_id = str(_curr_u.get("id")) if _curr_u.get("id") else None
     _cand_name = _curr_u.get("full_name") or _curr_u.get("username")
-    if _cand_name:
+    _saved_track = None
+    if _user_id:
+        _saved_track = load_student_dashboard_state(_user_id)
+    if not _saved_track and _cand_name:
         _saved_track = load_student_dashboard_state(_cand_name)
-        if _saved_track:
-            st.session_state["agent_data"] = _saved_track
+    if _saved_track:
+        st.session_state["agent_data"] = _saved_track
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
