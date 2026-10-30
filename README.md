@@ -110,7 +110,7 @@
 
 ## 🛠️ Tech Stack
 
-- **Language:** Python 3.11, 3.12, 3.13 (Fully tested in CI across 3.11–3.13)
+- **Language:** Python 3.11, 3.12 (Tested and supported in CI)
 - **Agent Framework:** LangGraph 0.2+ & LangChain
 - **LLM Engine:** Google Gemini (Gemini 3.5 Flash Lite) via `langchain-google-genai`
 - **Backend API:** FastAPI & Uvicorn
