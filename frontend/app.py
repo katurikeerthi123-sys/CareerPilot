@@ -13,6 +13,7 @@ Features:
 from __future__ import annotations
 
 import os
+import re
 import sys
 import threading
 import time
@@ -566,6 +567,41 @@ def _get_auth_modules():
     return db_conn, db_models, db_repo, b_auth
 
 
+def _format_error_detail(detail: Any) -> str:
+    """Format backend error details (strings, dicts, or Pydantic validation error lists) into clean text."""
+    if isinstance(detail, str):
+        detail_stripped = detail.strip()
+        if (detail_stripped.startswith("[") and detail_stripped.endswith("]")) or (
+            detail_stripped.startswith("{") and detail_stripped.endswith("}")
+        ):
+            import ast
+            import json
+            try:
+                detail = json.loads(detail_stripped)
+            except Exception:
+                try:
+                    detail = ast.literal_eval(detail_stripped)
+                except Exception:
+                    pass
+
+    if isinstance(detail, list):
+        messages = []
+        for item in detail:
+            if isinstance(item, dict):
+                loc = item.get("loc", [])
+                field = str(loc[-1]).replace("_", " ").capitalize() if loc else "Field"
+                msg = item.get("msg", "Invalid value")
+                if msg.startswith("Value error, "):
+                    msg = msg.replace("Value error, ", "")
+                messages.append(f"{field}: {msg}")
+            else:
+                messages.append(str(item))
+        return " | ".join(messages) if messages else "Invalid input provided."
+    if isinstance(detail, dict):
+        return str(detail.get("detail") or detail.get("msg") or detail.get("message") or detail)
+    return str(detail)
+
+
 def call_register_api(
     username: str,
     email: str,
@@ -593,7 +629,7 @@ def call_register_api(
             # Real validation error from backend (e.g., duplicate username, bad email)
             data = resp.json() if resp.content else {}
             detail = data.get("detail") or data.get("message") or f"HTTP {resp.status_code}"
-            return False, None, str(detail)
+            return False, None, _format_error_detail(detail)
     except Exception:
         pass
 
@@ -606,6 +642,8 @@ def call_register_api(
         clean_e = email.strip().lower()
         clean_name = full_name.strip() if full_name else clean_u
 
+        if len(clean_u) < 3:
+            return False, None, "Username must be at least 3 characters long."
         if not re.match(r"^[a-zA-Z0-9_.-]+$", clean_u):
             return False, None, "Username may only contain letters, numbers, underscores, hyphens, and periods."
         if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", clean_e):
@@ -660,7 +698,7 @@ def call_login_api(
         elif resp.status_code not in (404, 502, 503):
             data = resp.json() if resp.content else {}
             detail = data.get("detail") or data.get("message") or f"HTTP {resp.status_code}"
-            return False, None, str(detail)
+            return False, None, _format_error_detail(detail)
     except Exception:
         pass
 
@@ -805,8 +843,16 @@ def render_auth_page():
                 reg_submit = st.form_submit_button("✨ Register & Start Preparation", type="primary", use_container_width=True)
 
                 if reg_submit:
-                    if not reg_user.strip() or not reg_email.strip() or not reg_p1:
+                    clean_u = reg_user.strip()
+                    clean_e = reg_email.strip()
+                    if not clean_u or not clean_e or not reg_p1:
                         st.error("Please fill in all required fields (Username, Email, Password).")
+                    elif len(clean_u) < 3:
+                        st.error("Username must be at least 3 characters long.")
+                    elif not re.match(r"^[a-zA-Z0-9_.-]+$", clean_u):
+                        st.error("Username may only contain letters, numbers, underscores, hyphens, and periods.")
+                    elif not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", clean_e):
+                        st.error("Please enter a valid email address.")
                     elif len(reg_p1) < 6:
                         st.error("Password must be at least 6 characters long.")
                     elif reg_p1 != reg_p2:
